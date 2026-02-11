@@ -1,1 +1,10 @@
 # url
+
+{
+  "rewrites": [
+    {
+      "source": "/d/:code",
+      "destination": "/index.html"
+    }
+  ]
+}
