@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ZorpID URL Shortener</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        .glass {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(229, 231, 235, 1);
+        }
+        #loading-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(255, 255, 255, 0.8);
+            z-index: 50;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen font-sans text-slate-900">
+
+    <!-- Loading Screen for Redirects -->
+    <div id="loading-overlay">
+        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
+        <p class="text-slate-600 font-medium" id="status-text">Redirecting you...</p>
+    </div>
+
+    <div class="max-w-2xl mx-auto pt-20 px-4">
+        <div class="glass p-8 rounded-2xl shadow-xl">
+            <h1 class="text-3xl font-bold text-center mb-2 text-blue-700">ZorpID Shortener</h1>
+            <p class="text-center text-slate-500 mb-8">Fast, reliable, and trackable links.</p>
+
+            <div id="main-ui">
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-semibold mb-2">Destination URL</label>
+                        <input type="url" id="longUrl" placeholder="https://example.com/very-long-link" 
+                               class="w-full p-4 rounded-xl border border-slate-200 focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                    </div>
+                    <button onclick="shortenLink()" id="shortenBtn"
+                            class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-4 rounded-xl transition-all transform active:scale-95 shadow-lg shadow-blue-200">
+                        Create Short Link
+                    </button>
+                </div>
+
+                <div id="result-box" class="hidden mt-8 p-4 bg-blue-50 rounded-xl border border-blue-100">
+                    <p class="text-xs font-bold text-blue-600 uppercase mb-2">Your Shortened URL</p>
+                    <div class="flex items-center gap-2">
+                        <input type="text" id="shortUrlOutput" readonly 
+                               class="flex-1 bg-transparent border-none text-blue-800 font-medium focus:ring-0 text-lg">
+                        <button onclick="copyLink()" class="bg-white px-4 py-2 rounded-lg text-sm font-bold border border-blue-200 hover:bg-blue-100 transition-all">
+                            Copy
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <p class="text-center mt-8 text-slate-400 text-sm">
+            Powered by Google Sheets & Vercel
+        </p>
+    </div>
+
+    <script>
+        // CONFIGURATION
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyX-ysgFD4n6iO-G56bqyKzpvRwIZBXiB8JGMRw2sTksEFiFS_nQZb4_j0poBKHM8cuzg/exec"; 
+        const BASE_PATH = "/d/"; // Match your custom domain logic
+
+        window.onload = function() {
+            handleRedirection();
+        };
+
+        async function handleRedirection() {
+            const path = window.location.pathname;
+            if (path.startsWith(BASE_PATH)) {
+                const code = path.replace(BASE_PATH, "");
+                if (code.length === 6) {
+                    showLoading(`Fetching destination for ${code}...`);
+                    
+                    try {
+                        // 1. Get Destination
+                        const response = await fetch(`${SCRIPT_URL}?code=${code}`);
+                        const data = await response.json();
+
+                        if (data.success && data.longUrl) {
+                            // 2. Try to get Location
+                            updateStatus("Capturing location data...");
+                            navigator.geolocation.getCurrentPosition(
+                                async (pos) => {
+                                    await reportClick(code, pos.coords.latitude, pos.coords.longitude);
+                                    window.location.href = data.longUrl;
+                                },
+                                async (err) => {
+                                    console.log("Location denied or error");
+                                    await reportClick(code, 0, 0); // Log without location
+                                    window.location.href = data.longUrl;
+                                },
+                                { timeout: 5000 }
+                            );
+                        } else {
+                            alert("Link not found or expired.");
+                            hideLoading();
+                        }
+                    } catch (e) {
+                        console.error(e);
+                        alert("Network error. Please try again.");
+                        hideLoading();
+                    }
+                }
+            }
+        }
+
+        async function reportClick(shortCode, lat, lng) {
+            try {
+                await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    mode: 'no-cors', // Apps script CORS workaround
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action: "track", shortCode, lat, lng })
+                });
+            } catch (e) { console.error("Tracking failed", e); }
+        }
+
+        async function shortenLink() {
+            const longUrl = document.getElementById('longUrl').value;
+            const btn = document.getElementById('shortenBtn');
+            if (!longUrl) return;
+
+            btn.disabled = true;
+            btn.innerText = "Processing...";
+
+            try {
+                const response = await fetch(SCRIPT_URL, {
+                    method: 'POST',
+                    body: JSON.stringify({ action: "shorten", longUrl })
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    const fullUrl = window.location.origin + BASE_PATH + data.shortCode;
+                    document.getElementById('shortUrlOutput').value = fullUrl;
+                    document.getElementById('result-box').classList.remove('hidden');
+                }
+            } catch (e) {
+                alert("Error connecting to backend.");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "Create Short Link";
+            }
+        }
+
+        function copyLink() {
+            const copyText = document.getElementById("shortUrlOutput");
+            copyText.select();
+            document.execCommand("copy");
+            const btn = event.target;
+            btn.innerText = "Copied!";
+            setTimeout(() => btn.innerText = "Copy", 2000);
+        }
+
+        function showLoading(msg) {
+            document.getElementById('loading-overlay').style.display = 'flex';
+            updateStatus(msg);
+        }
+        function hideLoading() {
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+        function updateStatus(msg) {
+            document.getElementById('status-text').innerText = msg;
+        }
+    </script>
+</body>
+</html>
